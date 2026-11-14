@@ -50,7 +50,8 @@ class SupplierEmail(BaseModel):
     supplier: str = Field(description="Supplier name, copied from the data")
     to: str = Field(description="Supplier email address, copied from the data")
     subject: str = Field(description="Short email subject line")
-    body: str = Field(description="Polite email body listing every product and quantity to order")
+    intro: str = Field(description="One polite sentence introducing the order")
+    closing: str = Field(description="One sentence asking the supplier to confirm the delivery date")
 
 
 class EmailBatch(BaseModel):
@@ -105,6 +106,7 @@ Rules:
 - new_price must be lower than unit_price and never below unit_cost.
 - The closer the expiry date, the bigger the discount.
 - At most one entry per product.
+- Round every new_price to the nearest 0.5 EGP.
 
 Expiring batches: {state["expiring"]}
 Slow movers: {state["slow_movers"]}
@@ -159,14 +161,29 @@ def draft_supplier_emails(state: InventoryState):
         return {"reorders": [], "email_drafts": []}
 
     prompt = f"""You write purchase-order emails for a supermarket in Egypt.
-Write exactly one email per supplier, covering all of that supplier's products.
-Use the exact product names and order quantities below. Do not change any number.
-Ask the supplier to confirm the delivery date. Sign the email as "Store Manager".
+Write exactly one email per supplier. Copy the supplier name and email address exactly.
+You only write the subject, one intro sentence and one closing sentence:
+the product list and the signature are added automatically.
 
 Products to reorder: {reorders}
 """
     batch = email_llm.invoke(prompt)
-    return {"reorders": reorders, "email_drafts": [e.model_dump() for e in batch.emails]}
+
+    # Python builds the layout, so the format and the numbers are always right.
+    drafts = []
+    for email in batch.emails:
+        items = [r for r in reorders if r["supplier_email"] == email.to]
+        product_lines = "\n".join(f"- {r['product']}: {r['order_quantity']} units" for r in items)
+        body = (
+            f"Dear {email.supplier},\n\n"
+            f"{email.intro}\n\n"
+            f"{product_lines}\n\n"
+            f"{email.closing}\n\n"
+            f"Best regards,\nStore Manager"
+        )
+        drafts.append({"supplier": email.supplier, "to": email.to,
+                       "subject": email.subject, "body": body})
+    return {"reorders": reorders, "email_drafts": drafts}
 
 
 def human_review(state: InventoryState):
