@@ -12,14 +12,14 @@ Flow:
 """
 import os
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict #describes a dictionary with fixed keys and types. Used for the state.
 
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.graph import END, START, StateGraph
+from langgraph.checkpoint.memory import InMemorySaver #The checkpointer. Here it’s needed for pausing and resuming at human_review.
+from langgraph.graph import END, START, StateGraph #StateGraph: the class you use to build a graph.
 from langgraph.types import interrupt
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field #Pydantic, used to define the forms for structured output:
 
 from tools import (
     get_connection,
@@ -41,7 +41,7 @@ class Discount(BaseModel):
     new_price: float = Field(description="Discounted price per unit in EGP")
     reason: str = Field(description="One short sentence explaining why")
 
-
+#The outer form: a list of Discount forms. The LLM fills in one DiscountPlan containing as many discounts as it wants.
 class DiscountPlan(BaseModel):
     discounts: list[Discount] = Field(description="One entry per product to discount")
 
@@ -57,7 +57,9 @@ class SupplierEmail(BaseModel):
 class EmailBatch(BaseModel):
     emails: list[SupplierEmail] = Field(description="Exactly one email per supplier")
 
-
+# llm is the normal Gemini model.
+# llm.with_structured_output(DiscountPlan) creates a version of it that must answer by filling in a DiscountPlan. Calling discount_llm.invoke(prompt) returns a DiscountPlan object, not text.
+# email_llm is the same idea for emails.
 llm = ChatGoogleGenerativeAI(model=os.getenv("GEMINI_MODEL"), temperature=0)
 discount_llm = llm.with_structured_output(DiscountPlan)
 email_llm = llm.with_structured_output(EmailBatch)
@@ -80,6 +82,7 @@ class InventoryState(TypedDict, total=False):
 
 
 # ---------- 3. Nodes: one function per step ----------
+#The rule for every node: it receives the whole state and returns only the keys it changed
 
 def check_expiry(state: InventoryState):
     return {"expiring": get_expiring_products.invoke({"days": 3})}
@@ -116,6 +119,7 @@ Slow movers: {state["slow_movers"]}
 
     plan = discount_llm.invoke(prompt)
     return {
+        #d.model_dump() turns each Pydantic Discount object into a normal dictionary: {"product": "Pasta 500g", "new_price": 22.0, "reason": "..."}. The state stores plain dictionaries.
         "proposed_discounts": [d.model_dump() for d in plan.discounts],
         "attempts": state.get("attempts", 0) + 1,
     }
@@ -143,7 +147,7 @@ def evaluate_discounts(state: InventoryState):
                     f"{d['product']}: {d['new_price']} EGP is not lower than the "
                     f"current price of {row['unit_price']} EGP."
                 )
-            else:
+            else: #{**d, ...} means “copy every key from d, then add these extra keys.” The result: {"product": ..., "new_price": ..., "reason": ..., "old_price": 27.0, "unit_cost": 18.0}.
                 approved.append({**d, "old_price": row["unit_price"], "unit_cost": row["unit_cost"]})
 
     return {"approved_discounts": approved, "feedback": "\n".join(problems)}

@@ -33,6 +33,7 @@ def get_expiring_products(days: int = 7) -> list[dict]:
     limit = (today + timedelta(days=days)).isoformat()
     with get_connection() as conn:
         rows = conn.execute(
+            #julianday(date) turns a date into a day number, so subtracting two of them gives the number of days between them.
             """
             SELECT p.name AS product, b.quantity, b.expiry_date,
                    CAST(julianday(b.expiry_date) - julianday(?) AS INTEGER) AS days_left,
@@ -44,7 +45,7 @@ def get_expiring_products(days: int = 7) -> list[dict]:
             """,
             (today.isoformat(), limit),
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [dict(row) for row in rows] #turns each row into a dictionary and collects them in a list. 
 
 
 @tool
@@ -57,6 +58,9 @@ def get_low_stock_products() -> list[dict]:
     today = date.today().isoformat()
     with get_connection() as conn:
         rows = conn.execute(
+            #Sorts by urgency: stock as a fraction of the reorder level.
+            # Attach all the product’s batches. “LEFT” keeps the product even if it has no batches at all. A plain JOIN would silently drop it, and a product with zero stock is exactly the one that most needs reordering.
+            # COALESCE(..., 0) means “if the result is empty (NULL), use 0 instead.” A product with no usable batches would otherwise have a stock of nothing, not zero.
             """
             SELECT p.name AS product,
                    COALESCE(SUM(CASE WHEN b.expiry_date >= ? THEN b.quantity END), 0) AS stock,
@@ -64,7 +68,7 @@ def get_low_stock_products() -> list[dict]:
                    s.name AS supplier, s.email AS supplier_email, s.lead_time_days
             FROM products p
             JOIN suppliers s ON s.id = p.supplier_id
-            LEFT JOIN batches b ON b.product_id = p.id
+            LEFT JOIN batches b ON b.product_id = p.id 
             GROUP BY p.id
             HAVING stock < p.reorder_level
             ORDER BY stock * 1.0 / p.reorder_level
@@ -119,7 +123,7 @@ def get_product_details(product_name: str) -> dict:
             WHERE p.name LIKE ?
             """,
             (f"%{product_name}%",),
-        ).fetchone()
+        ).fetchone() #returns only the first match, or None if nothing matches
         if product is None:
             return {"error": f"No product matches '{product_name}'."}
 
@@ -135,7 +139,9 @@ def get_product_details(product_name: str) -> dict:
         ).fetchone()[0]
 
     details = dict(product)
+    # Turn each batch row into a dict and store the list inside details (nested)
     details["batches"] = [dict(b) for b in batches]
+    # Add up quantities of non-expired batches only (expired stock can't be sold)
     details["usable_stock"] = sum(
         b["quantity"] for b in batches if b["expiry_date"] >= today.isoformat()
     )

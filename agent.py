@@ -27,6 +27,9 @@ Rules:
 
 llm = ChatGoogleGenerativeAI(model=os.getenv("GEMINI_MODEL"), temperature=0)
 
+# Agent = model (brain) + tools (hands) + system prompt (rules) + checkpointer (memory).
+# create_agent builds a small LangGraph graph: model -> tools -> model, looping until
+# the model answers with text instead of a tool call.
 agent = create_agent(
     model=llm,
     tools=ALL_TOOLS,
@@ -43,6 +46,8 @@ def show_tool_calls(messages):
 
 
 def main():
+    # thread_id = the name of the saved conversation. Same id = same memory;
+    # a different id starts a fresh conversation.
     config = {"configurable": {"thread_id": "manager-1"}}
     print("Inventory assistant ready. Type 'quit' to exit.\n")
 
@@ -50,11 +55,17 @@ def main():
         question = input("You: ").strip()
         if question.lower() in ("quit", "exit"):
             break
-        if not question:
+        if not question: #If you pressed Enter without typing anything, question is an empty string, which counts as false. continue jumps back to the top of the loop, so no empty message is sent to Gemini.
             continue
 
+        # Count the saved messages before this question, so we can print only this turn's tool calls
         before = len(agent.get_state(config).values.get("messages", []))
+
+        # Send only the new question; the checkpointer adds the saved history automatically.
+        # Inside, the agent loop runs: tool calls -> tool results -> final answer.
         result = agent.invoke({"messages": [{"role": "user", "content": question}]}, config)
+        
+        # Slice: keep only the messages created during this question
         new_messages = result["messages"][before:]
 
         show_tool_calls(new_messages)

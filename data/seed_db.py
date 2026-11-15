@@ -4,7 +4,7 @@ Run from the project root:  python data/seed_db.py
 Running it again deletes the old database and builds a fresh one.
 """
 import random
-import sqlite3
+import sqlite3 #Built-in module for SQLite. SQLite is a database stored in one file, with no server to install, which is ideal for a project like this.
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -142,7 +142,7 @@ def main():
     conn.executescript(SCHEMA)    # create the 4 tables
     insert_data(conn)
     conn.commit()                 # save everything to the file
-    print_summary(conn)
+    print_summary(conn) 
     conn.close()
 
 
